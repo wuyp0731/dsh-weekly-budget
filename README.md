@@ -129,17 +129,17 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 
 ### 方式二：从 GitHub 安装
 
-插件发布到 GitHub 后，可以用插件管理器或 CLI 安装：
+仓库：<https://github.com/wuyp0731/dsh-weekly-budget>
 
 ```powershell
-dsh plugin --profile desktop add "github:<GitHub 用户名>/dsh-weekly-budget"
+dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
 
 然后在 profile 的 `package.json` 中把 `"dsh-weekly-budget"` 追加进 `dsh.profile.bundles`
 （CLI 不会自动改这里），重启 Harness 并刷新页面。
 
 在 Harness 会话里也可以让 Agent 用插件管理器完成同样的两步：
-`action = install_bundle`、`target = <本地目录绝对路径或 github:owner/repo>`。
+`action = install_bundle`、`target = github:wuyp0731/dsh-weekly-budget`。
 
 ### 校验是否装好
 
