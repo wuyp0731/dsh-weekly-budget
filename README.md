@@ -302,7 +302,10 @@ dsh-weekly-budget/
 │   ├── verify-stats.mjs  # 用真实会话日志跑一遍统计
 │   ├── verify-apply.mjs  # mock ctx 跑 apply()，验证 summary 写盘
 │   ├── verify-static.mjs # 静态契约检查（inject / slot / 字典 / 主题变量）
-│   └── inspect-peak-calls.mjs # 峰谷归属分布与边界差异诊断
+│   ├── inspect-peak-calls.mjs # 峰谷归属分布与边界差异诊断
+│   └── check-privacy.mjs # 提交前隐私检查（本机路径 / 用户名 / 凭据 / 邮箱）
+├── .githooks/
+│   └── pre-commit        # git 提交前钩子，自动跑 check-privacy.mjs
 └── README.md
 ```
 
@@ -315,7 +318,22 @@ node tools/verify-static.mjs         # 静态契约检查（不需要浏览器�
 node tools/verify-stats.mjs          # 用真实 ~/.dsh/sessions 跑一遍统计
 node tools/verify-apply.mjs          # mock ctx 跑 apply()，验证 summary.json 写盘
 node tools/inspect-peak-calls.mjs    # 本周每次调用的峰谷归属与边界差异
+node tools/check-privacy.mjs         # 提交前隐私检查
 ```
+
+### 提交前隐私检查
+
+仓库带一个提交钩子：`git commit` 时会自动执行 `node tools/check-privacy.mjs`，
+扫描所有跟踪文件里的**本机绝对路径、Windows 用户名、凭据 token、私钥和邮箱**；
+命中会列出文件与行号（不回显具体内容）并中止提交。
+
+克隆仓库后启用一次（钩子放在 `.githooks/`，不依赖全局 git 配置）：
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+提交前也可以手动跑：`node tools/check-privacy.mjs`。
 
 ### 实现要点
 

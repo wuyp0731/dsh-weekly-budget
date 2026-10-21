@@ -1,0 +1,12 @@
+#!/bin/sh
+# 提交前隐私检查：拦截本机路径、用户名、凭据、邮箱。
+# 启用方式（每个 clone 执行一次）：git config core.hooksPath .githooks
+if command -v node >/dev/null 2>&1; then
+  node tools/check-privacy.mjs || {
+    echo ""
+    echo "[pre-commit] 隐私检查未通过，提交已中止。"
+    exit 1
+  }
+else
+  echo "[pre-commit] 未找到 node，跳过隐私检查（建议安装 Node 后重试）。"
+fi
