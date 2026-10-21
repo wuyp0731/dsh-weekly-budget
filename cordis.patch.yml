@@ -1,0 +1,9 @@
+# dsh-weekly-budget bundle patch：向 profile 注入每周额度插件行。
+# Node half（index.js）声明 Config（周上限、单价、周起始日）并定期把本周用量
+# 汇总写成 summary.json；client half（client.js）在输入框下方渲染「每周额度」
+# 进度胶囊，并通过 configForms 读写同一份 Config。
+# 下面 insert 的 id 就是 configForms 的命名空间，client half 以它读取配置，
+# 两边必须一致（NAMESPACE = 'weekly-budget'）。
+- insert:
+    - id: weekly-budget
+      name: 'dsh-weekly-budget'

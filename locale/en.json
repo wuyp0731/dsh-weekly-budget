@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Weekly Budget",
+    "description": "Shows a weekly spending progress bar under the composer, with a configurable weekly spending cap."
+  }
+}
