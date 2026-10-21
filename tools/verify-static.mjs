@@ -81,7 +81,7 @@ if (themePath !== '' && fs.existsSync(themePath)) {
   if (missing.length > 0) fail('主题变量不存在：' + missing.join(', '))
   else pass('主题变量全部存在（' + used.size + ' 个）')
 } else {
-  console.log('· 跳过主题变量检查（找不到 ' + themePath + '）')
+  console.log('· 跳过主题变量检查（未设置 DSH_THEME_CLIENT，可选）')
 }
 
 if (failures > 0) {
