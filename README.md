@@ -10,11 +10,11 @@ token 用量和按模型折算的金额。
 
 ## 快速安装（三步）
 
-以插件源码在 `D:\Desktop\dsh_workspace\dsh-weekly-budget`、profile 为 `desktop` 为例：
+以插件源码位于 `<你的插件目录>`（例如 `D:\plugins\dsh-weekly-budget`）、profile 为 `desktop` 为例：
 
 ```powershell
 # 1) 把本地目录链接进 profile（写入 dependencies）
-& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:D:/Desktop/dsh_workspace/dsh-weekly-budget"
+& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<你的插件目录>"
 ```
 
 2. 打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，在 `dsh.profile.bundles`
@@ -75,7 +75,7 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 
 ### 方式一：从本地目录安装（开发 / 离线）
 
-以插件源码放在 `D:\Desktop\dsh_workspace\dsh-weekly-budget` 为例。
+以插件源码放在 `<你的插件目录>` 为例。
 
 1. **备份** profile 的 `package.json`：
 
@@ -89,14 +89,14 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
    - 用 CLI（会转发给 pnpm，自动写入 `dependencies`）：
 
      ```powershell
-     dsh plugin --profile desktop add "link:D:/Desktop/dsh_workspace/dsh-weekly-budget"
+     dsh plugin --profile desktop add "link:<你的插件目录>"
      ```
 
      如果 `dsh` 不在 PATH 中，用完整路径（Windows 安装包的默认位置；实测该目录下存在
      `dsh.cmd`，可正常转发 `plugin` 子命令到 pnpm）：
 
      ```powershell
-     & "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:D:/Desktop/dsh_workspace/dsh-weekly-budget"
+     & "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<你的插件目录>"
      ```
 
    - 或手工编辑 `%DSH_HOME%\profiles\desktop\package.json`，只加两处：
@@ -104,7 +104,7 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
      ```jsonc
      "dependencies": {
        // ...其它插件不动...
-       "dsh-weekly-budget": "link:D:/Desktop/dsh_workspace/dsh-weekly-budget"
+       "dsh-weekly-budget": "link:<你的插件目录>"
      },
      "dsh": {
        "profile": {
@@ -240,9 +240,9 @@ Host 侧写出的汇总文件（`version: 1`），供前端读取，也方便脚
 }
 ```
 
-> 上面的数值取自 2026-10-21 的一次真实快照（周一 00:00 起算的本周窗口，
-> `weekStart = 2026-10-19 00:00` 本地时间，按官网峰谷价折算）；随着会话继续产生用量，字段值会变化。
-> `billing.effective` 给出本次实际使用的峰价/空闲价，方便核对。
+> 上面是**结构示例**（数值仅用于说明字段含义，不是任何人的真实账单）。实际运行时
+> `weekStart` 是本周起始日 00:00 的本地时间毫秒，金额按官网峰谷价折算；`billing.effective`
+> 给出本次实际使用的峰价/空闲价，方便核对。
 
 - 金额保留 6 位小数；`percent` 保留 1 位。
 - `ratio = used / limit`；`limit <= 0` 时为 `null`。

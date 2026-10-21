@@ -14,7 +14,7 @@
 ## 2. 文件布局与写范围
 
 ```
-D:\Desktop\dsh_workspace\dsh-weekly-budget\
+dsh-weekly-budget/
   package.json        # 已就绪（Lead 维护）
   cordis.patch.yml    # 已就绪（Lead 维护）；entry id = weekly-budget = configForms 命名空间
   index.js            # Host 半端（host-dev）
@@ -198,9 +198,12 @@ D:\Desktop\dsh_workspace\dsh-weekly-budget\
 
 ## 6. 参考（只读，别改）
 
-- `C:/Users/burni/.dsh/profiles/desktop/node_modules/dsh-whale-persona/lib/client.js`（configForms 用法）
-- `D:/Desktop/dsh_workspace/dsh-weekly-budget-ref/dsh-client-ui-chat_lib_client.js`
+> 下列 `*_lib_client.js` / `*_README.zh.md` 是从 DSH 安装包的 `app.asar` 中解出的文件，
+> 文件名里的下划线用于代替原路径分隔符。
+
+- `<profile>/node_modules/dsh-whale-persona/lib/client.js`（configForms 用法；`<profile>` 指 `~/.dsh/profiles/<名字>`）
+- `dsh-client-ui-chat/lib/client.js`（从 DSH 安装包的 `app.asar` 解出）
   （第 7373 行胶囊 CSS、第 6814 行弹窗 CSS、第 7516 行 DialogPill 交互）
-- `D:/Desktop/dsh_workspace/dsh-weekly-budget-ref/dsh-client-ui-conversation_lib_client.js`
+- `dsh-client-ui-conversation_lib_client.js`（从 `app.asar` 解出）
   （第 18703 行 dock 容器 CSS）
-- `D:/Desktop/dsh_workspace/dsh-weekly-budget-ref/dsh-api-workspace-files_README.zh.md`（read 签名）
+- `dsh-api-workspace-files_README.zh.md`（`app.asar` 内的 read 签名文档）

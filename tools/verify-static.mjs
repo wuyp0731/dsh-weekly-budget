@@ -72,9 +72,9 @@ else pass('package.json bundle patch 已声明')
 if (!Array.isArray(pkg.dsh?.client?.inject)) fail('package.json 缺 client.inject')
 else pass('package.json client.inject 已声明')
 
-// 5. 主题变量（可选：需要 weekly-budget-ref 的 theme client.js）
-const themePath = 'D:/Desktop/dsh_workspace/weekly-budget-ref/dsh-client-ui-theme_lib_client.js'
-if (fs.existsSync(themePath)) {
+// 5. 主题变量（可选：把从 DSH app.asar 解出的 theme client.js 路径放进环境变量 DSH_THEME_CLIENT）
+const themePath = process.env.DSH_THEME_CLIENT ?? ''
+if (themePath !== '' && fs.existsSync(themePath)) {
   const theme = fs.readFileSync(themePath, 'utf8')
   const used = new Set([...client.matchAll(/--dsw-[a-z0-9-]+/g)].map((match) => match[0]))
   const missing = [...used].filter((name) => !theme.includes(name))
