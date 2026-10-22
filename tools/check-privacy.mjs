@@ -5,6 +5,7 @@
  * 扫描 git 跟踪的所有文件，拦截以下内容：
  *   - 本机用户目录路径（C:\Users\<具体用户名>）
  *   - 个人 Desktop 路径（例如 D:\Desktop\...）
+ *   - 任何盘符绝对路径（例如 D:\DeepSeek Harness\...）：对外文档必须写成占位符
  *   - 运行本脚本的机器的 Windows 用户名（运行时从 os.userInfo() 读取，不在本文件里硬编码）
  *   - GitHub / 云厂商凭据（PAT、sk-、AKIA）
  *   - 私钥
@@ -45,6 +46,13 @@ const RULES = [
   {
     name: '本机 Windows 用户名',
     pattern: user.length >= 3 ? new RegExp('(?<![A-Za-z0-9_])' + escapeRegExp(user) + '(?![A-Za-z0-9_])', 'g') : null,
+  },
+  {
+    // 盘符绝对路径（本机安装目录、D:\xxx 之类）：对外文档里必须写成占位符。
+    // 占位符 <...>、%VAR%、$env:VAR 以及 URL 不算。
+    name: '本机绝对路径',
+    pattern: /(?<![A-Za-z0-9])[A-Za-z]:[\\/](?!<|%|\$)[^\s"'`]*/g,
+    allow: (match) => /[<%$]/.test(match),
   },
   {
     name: '凭据 token',

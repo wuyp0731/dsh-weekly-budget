@@ -1,13 +1,15 @@
 {
   "name": "dsh-weekly-budget",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Weekly spend budget for DeepSeek Harness: a composer dock pill with a weekly progress bar and a configurable weekly spending cap.",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
@@ -16,7 +18,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -35,9 +38,9 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "~3.18.4"
+    "@deepseek-ai/schemastery": "~3.18.5"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.0.4"
+    "@deepseek-ai/cordis": "~4.0.5"
   }
 }

@@ -9,7 +9,8 @@
  *   - 配置：ctx.configForms.get('weekly-budget')，getSnapshot().value 读、set(field, value) 写；
  *     命名空间必须与 cordis.patch.yml 的 entry id 一致。
  *   - 用量：ctx.remote.workspaceFiles.read(sessionId, path, {}, signal) 读 host 侧写下的
- *     summary.json；sessionId 走 props.sessionId，缺失时退回 ctx.sessions.list 快照。
+ *     summary.json；sessionId 只作授权通道（槽位是 session 作用域，渲染器注入
+ *     props.sessionId），统计内容本身是本机全部会话的汇总，不随当前会话变化。
  *
  * 只依赖 react / react-dom，样式全部使用 --dsw-* 主题变量，类名统一 wb- 前缀。
  */
@@ -435,75 +436,14 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /** 会话列表快照里的行；结构缺失时返回空数组。 */
-    function sessionRows(store) {
-      if (store === undefined || store === null || typeof store.getSnapshot !== 'function') return [];
-      let snapshot;
-      try {
-        snapshot = store.getSnapshot();
-      } catch (error) {
-        return [];
-      }
-      if (snapshot === undefined || snapshot === null) return [];
-      const byId = snapshot.byId;
-      if (byId === undefined || byId === null || typeof byId !== 'object') return [];
-      const rows = [];
-      for (const key of Object.keys(byId)) {
-        const row = byId[key];
-        if (row !== null && typeof row === 'object') rows.push(row);
-      }
-      return rows;
-    }
-
-    /** 一行会话被本地视图保留的总次数。 */
-    function retentionOf(row) {
-      const retained = row.retainedBy;
-      if (retained === undefined || retained === null || typeof retained !== 'object') return 0;
-      let total = 0;
-      for (const key of Object.keys(retained)) {
-        const value = retained[key];
-        if (typeof value === 'number' && value > 0) total += value;
-      }
-      return total;
-    }
-
     /**
-     * 选一个能读文件的会话：props.sessionId > 主视图保留 > 任意保留 > 第一行。
+     * 取 props 里的授权会话 id。槽位是 session 作用域，渲染器保证注入 `sessionId`；
+     * 它只用于 workspaceFiles.read 的会话授权，不决定统计范围（统计范围是本机全部会话）。
+     * @param props - 插槽渲染器注入的 props。
+     * @returns 非空字符串或 undefined。
      */
-    function resolveSessionId(preferred, store) {
-      if (typeof preferred === 'string' && preferred !== '') return preferred;
-      const rows = sessionRows(store);
-      if (rows.length === 0) return undefined;
-      const mainView = rows.find((row) => {
-        const retained = row.retainedBy;
-        return retained !== undefined && retained !== null && typeof retained === 'object'
-          && typeof retained.mainView === 'number' && retained.mainView > 0;
-      });
-      const candidates = [mainView, rows.find((row) => retentionOf(row) > 0), rows[0]];
-      for (const row of candidates) {
-        if (row !== undefined && typeof row.id === 'string' && row.id !== '') return row.id;
-      }
-      return undefined;
-    }
-
-    /**
-     * 读 summary.json：默认 direct 签名 read(sessionId, path, range, signal)。
-     * 若 gateway 选中 scoped 分支，业务签名会变成 read(path, range, signal)，此时抛
-     * 「expected N business argument(s)」；捕获后降级重试一次并记住该模式，
-     * 后续轮询直接走 3 参调用，不再反复触发异常。
-     */
-    let summaryReadScoped = false;
-    async function readSummaryFile(files, sessionId, path, signal) {
-      if (!summaryReadScoped) {
-        try {
-          return await files.read(sessionId, path, {}, signal);
-        } catch (error) {
-          const message = errorMessage(error);
-          if (message.indexOf('business argument') < 0) throw error;
-          summaryReadScoped = true;
-        }
-      }
-      return files.read(path, {}, signal);
+    function sessionIdOf(props) {
+      return typeof props.sessionId === 'string' && props.sessionId !== '' ? props.sessionId : undefined;
     }
 
     /**
@@ -521,7 +461,7 @@ window.__ModuleLoader__.load({
         if (signal !== undefined && signal.aborted) return { status: 'aborted' };
         let result;
         try {
-          result = await readSummaryFile(files, sessionId, path, signal);
+          result = await files.read(sessionId, path, {}, signal);
         } catch (error) {
           if (signal !== undefined && signal.aborted) return { status: 'aborted' };
           failure = errorMessage(error);
@@ -556,30 +496,38 @@ window.__ModuleLoader__.load({
       return { status: 'waiting' };
     }
 
-    /** 注入一次全局样式（按 data-plugin-css 去重）。 */
-    function ensureCss() {
-      if (typeof document === 'undefined' || document.head === null) return;
+    /**
+     * 注入一次全局样式（按 data-plugin-css 去重），返回移除函数。
+     * 样式在 apply 里通过 ctx.effect 管理，插件卸载时随 fiber 一并清除。
+     */
+    function installCss() {
+      if (typeof document === 'undefined' || document.head === null) return () => {};
       const tagId = 'dsh-weekly-budget/client.css';
       const selector = 'style[data-plugin-css=' + JSON.stringify(tagId) + ']';
-      if (document.querySelector(selector) !== null) return;
+      if (document.querySelector(selector) !== null) return () => {};
       const tag = document.createElement('style');
       tag.dataset.plugin = 'dsh-weekly-budget';
       tag.dataset.pluginCss = tagId;
       tag.textContent = CSS;
       document.head.appendChild(tag);
+      return () => {
+        if (tag.parentNode !== null) tag.parentNode.removeChild(tag);
+      };
     }
 
-    const inject = ['slots', 'configForms', 'locale', 'remote', 'remote.workspaceFiles', 'sessions'];
+    const inject = ['slots', 'configForms', 'locale', 'remote', 'remote.workspaceFiles'];
 
     function apply(ctx) {
-      ensureCss();
+      // 样式与字典都是本插件资源：注册在 apply 内、随 fiber 释放。
+      const registerStyles = () => installCss();
+      if (typeof ctx.effect === 'function') ctx.effect(registerStyles, 'weekly-budget: styles');
+      else registerStyles();
 
       const form = ctx.configForms !== undefined && ctx.configForms !== null && typeof ctx.configForms.get === 'function'
         ? ctx.configForms.get(NAMESPACE)
         : undefined;
       const remote = ctx.remote !== undefined && ctx.remote !== null ? ctx.remote : undefined;
       const workspaceFiles = remote !== undefined ? remote.workspaceFiles : undefined;
-      const sessionStore = ctx.sessions !== undefined && ctx.sessions !== null ? ctx.sessions.list : undefined;
 
       // 字典随本插件 fiber 释放；t 由插槽渲染器注入。
       const registerDictionaries = () => ctx.locale.register(LOCALE_NS, { zh: zh, en: en });
@@ -626,15 +574,8 @@ window.__ModuleLoader__.load({
         }, []);
         const config = readConfig(form);
 
-        // ── 会话：props.sessionId 优先，否则跟随会话列表选择 ──────────────
-        const preferredSessionId = props.sessionId;
-        const subscribeSessions = React.useCallback((onChange) => {
-          if (sessionStore === undefined || sessionStore === null || typeof sessionStore.subscribe !== 'function') return () => {};
-          const unsubscribe = sessionStore.subscribe(onChange);
-          return typeof unsubscribe === 'function' ? unsubscribe : () => {};
-        }, []);
-        const selectSessionId = React.useCallback(() => resolveSessionId(preferredSessionId, sessionStore), [preferredSessionId]);
-        const sessionId = React.useSyncExternalStore(subscribeSessions, selectSessionId, () => undefined);
+        // ── 会话：只用槽位注入的授权会话；统计内容本身是全机汇总 ────────────
+        const sessionId = sessionIdOf(props);
 
         // ── 用量：挂载即读、15s 轮询、focus 刷新 ─────────────────────────
         const [summary, setSummary] = React.useState({ status: 'idle', data: null, error: null, fetchedAt: 0 });

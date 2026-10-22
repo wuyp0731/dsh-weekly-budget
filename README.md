@@ -11,8 +11,17 @@ token 用量和按模型折算的金额。
 ## 快速安装（一条命令）
 
 ```powershell
-& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
+dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
+
+`dsh` 不在 PATH 时（Windows 桌面版很常见），把命令里的 `dsh` 换成**你本机安装目录**下的
+CLI：`<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd`，即：
+
+```powershell
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
+```
+
+> 安装目录因机器而异（安装时选择的盘符/目录），文档里不写死某个人的路径。
 
 这条命令从 GitHub 下载插件装进 `desktop` profile，并**自动**把 `dsh-weekly-budget`
 追加进 profile 的 `dsh.profile.bundles`——DSH 0.2.x 的插件管理器在安装成功后自己注册带
@@ -37,6 +46,11 @@ token 用量和按模型折算的金额。
 
 ## 金额口径
 
+> **统计范围：本机这一个 DSH 数据目录下的全部持久化会话**——所有项目、所有会话，
+> **不是**当前打开的那个会话。同一 DeepSeek 账号在其它设备、其它 Harness 实例、
+> 其它客户端上的用量不会出现在这里；插件也不会去同步官方账户账单（官方也没有公开的
+> 历史 token 用量 API）。所以这里的数字只代表「这台机器上的 DSH 花了多少」，不是账号总额。
+
 对本周窗口内每个 `assistant/message` 事件携带的 `usage` 逐条折算后求和：
 
 ```text
@@ -58,8 +72,10 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 - 弹窗里点**「同步官网定价」**会按本周用量最大的模型，把内置的官网价格快照（2026-10-17）
   填成峰价并打开峰谷计价；官网调价后重新点一次即可。
 - 插件对**所有模型使用同一组单价**，不按模型分别定价；模型明细里的金额也按同一组单价折算。
-- 统计范围是 `<DSH_HOME>/sessions` 下本机持久化的会话；不包含其他设备、其他浏览器端
-  或未落盘的用量。`DSH_HOME` 默认是 `~/.dsh`，可用环境变量覆盖。
+- 统计范围是 `<DSH_HOME>/sessions` 下**本机全部持久化会话**（每个项目、每个会话的规范日志文件），
+  与浏览器当前打开哪个会话无关；不包含其他设备、其他 Harness 实例、其他浏览器端或未落盘的用量。
+  `DSH_HOME` 默认是 `~/.dsh`，可用环境变量覆盖。**同账号多设备无法汇总**：别的机器上产生的
+  用量在这台机器的日志里根本不存在，插件也无从同步。
 - 周窗口按**本机时区**计算：从每周起始日（默认周一）00:00 起算 7 天，跨周自动清零。
 
 ## 安装
@@ -79,10 +95,10 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
 
-`dsh` 不在 PATH 时用完整路径（Windows 安装包的默认位置）：
+`dsh` 不在 PATH 时用你本机安装目录下的完整路径（安装目录因机器而异，请换成实际位置）：
 
 ```powershell
-& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
+& "<你的 DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
 
 命令会做两件事，**不需要再手工编辑 profile 的 `package.json`**：
@@ -140,11 +156,15 @@ dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 
 ### 关于 schemastery 依赖
 
-Host 半端用 `@deepseek-ai/schemastery` 声明配置。插件通过 `createRequire` 依次尝试
-`@deepseek-ai/schemastery`、profile 的 `node_modules` 等候选路径加载，所以 `link:`
-方式安装也能正常工作（不要求把 schemastery 复制进插件目录）。
+Host 半端用 `@deepseek-ai/schemastery` 声明配置。插件通过 `createRequire` 依次尝试：
 
-如果 Host 日志出现 `[weekly-budget] schemastery 不可用`，说明候选路径都没找到该包，可以：
+1. `@deepseek-ai/schemastery`（正常安装时由 `dependencies` 直接解析）；
+2. `$DSH_PROFILE_DIR/node_modules/@deepseek-ai/schemastery`（Harness 注入的环境变量）；
+3. `~/.dsh/profiles/$DSH_PROFILE/node_modules/@deepseek-ai/schemastery`。
+
+这样 `link:`（本地目录）安装也能工作，且**不写死任何 profile 名**。三个候选都失败时，
+插件仍会加载，但只会日志 `[weekly-budget] schemastery 不可用，本次不声明 Config`，
+此时配置项不会出现在插件配置页——处理方式：
 
 - 在插件目录下建链接：`node_modules/@deepseek-ai/schemastery` 指向 profile 的
   `node_modules/@deepseek-ai/schemastery`；或
@@ -242,8 +262,14 @@ Host 侧写出的汇总文件（`version: 1`），供前端读取，也方便脚
 
 ## 限制
 
-- **只覆盖本机**：只统计 `<DSH_HOME>/sessions` 下持久化的会话日志；其他设备、
-  其他 Harness 实例的独立主目录、未落盘或已被清理的会话都不在统计内。
+- **只覆盖本机、不跨设备也不同步账号**：只统计 `<DSH_HOME>/sessions` 下持久化的会话日志；
+  其他设备、其他 Harness 实例的独立主目录、未落盘或已被清理的会话都不在统计内。
+  同一 DeepSeek 账号在多台机器 / 多个客户端上的消费无法在这里汇总，插件也拿不到官方
+  账号级账单（官方没有公开的历史用量 API）；要看账号总额只能去
+  [DeepSeek 开放平台](https://platform.deepseek.com/) 的用量 / 账单页自己看。
+- **统计全部会话，不是当前会话**：Host 汇总的是本机所有项目下所有会话的本周用量，
+  切换会话不会改变胶囊上的数字。
+- **金额是估算**：按配置单价 × 本机 token 用量折算，不是官方计费结果；与官方账单对不上是常态。
 - **只统计 usage 事件**：只有带 `data.usage` 的 `assistant/message` 事件参与折算；
   旧版本日志或缺少 usage 的事件会被跳过。
 - **估算而非账单**：不区分模型单价、不处理赠送额度/汇率；峰谷按固定时段计算，
@@ -287,7 +313,8 @@ dsh-weekly-budget/
 ├── index.js              # Host 半端：扫描会话日志、峰谷折算、写 summary.json
 ├── client.js             # Client 半端：dock 胶囊、弹窗、配置读写
 ├── locale/{zh,en}.json   # 插件管理器中显示的名称与描述
-├── icon.svg              # 插件图标
+├── icon.svg              # 插件图标（package.json 导出 ./icon）
+├── LICENSE               # MIT 许可
 ├── docs/CONTRACT.md      # 实现契约（数据格式与验收标准的唯一真源）
 ├── tools/
 │   ├── verify-stats.mjs  # 用真实会话日志跑一遍统计
@@ -305,9 +332,9 @@ dsh-weekly-budget/
 ```powershell
 node --check index.js
 node --check client.js
-node tools/verify-static.mjs         # 静态契约检查（不需要浏览器）
+node tools/verify-static.mjs         # 静态契约检查（inject / slot / 字典 / 图标 / locale / LICENSE）
 node tools/verify-stats.mjs          # 用真实 ~/.dsh/sessions 跑一遍统计
-node tools/verify-apply.mjs          # mock ctx 跑 apply()，验证 summary.json 写盘
+node tools/verify-apply.mjs          # 临时 DSH_HOME 跑 apply()，不覆盖真实 summary
 node tools/inspect-peak-calls.mjs    # 本周每次调用的峰谷归属与边界差异
 node tools/check-privacy.mjs         # 提交前隐私检查
 ```
@@ -316,7 +343,8 @@ node tools/check-privacy.mjs         # 提交前隐私检查
 
 仓库带一个提交钩子：`git commit` 时会自动执行 `node tools/check-privacy.mjs`，
 扫描所有跟踪文件里的**本机绝对路径、Windows 用户名、凭据 token、私钥和邮箱**；
-命中会列出文件与行号（不回显具体内容）并中止提交。
+命中会列出文件与行号（不回显具体内容）并中止提交。文档里的路径必须写成占位符
+（如 `<你的 DSH 安装目录>`、`%USERPROFILE%`、`<profile>`），不要写某个人的真实盘符路径。
 
 克隆仓库后启用一次（钩子放在 `.githooks/`，不依赖全局 git 配置）：
 
@@ -332,8 +360,9 @@ git config core.hooksPath .githooks
   版本号最高的规范文件）并逐帧解压。解析结果按文件 `(size, mtimeMs)` 缓存，
   文件不变不重读；配置变化（`loader/volatile-update`）与定时器触发重算。
 - **Client 侧**通过 `window.__ModuleLoader__.load` 注册，向 `conversation.composer.dock`
-  注入条目，用 `ctx.configForms.get('weekly-budget')` 读写配置，用
-  `ctx.remote.workspaceFiles.read` 读取 summary，每 15 秒与窗口重新聚焦时刷新。
+  注入条目（注册时声明 `locale` 命名空间，渲染器据此注入 `t`），用
+  `ctx.configForms.get('weekly-budget')` 读写配置，用 `ctx.remote.workspaceFiles.read`
+  读取 summary（`props.sessionId` 只用作读取授权，不限制统计范围），每 15 秒与窗口重新聚焦时刷新。
 - **配置依赖**：Host 半端用 `createRequire` 兜底加载 `@deepseek-ai/schemastery`，
   本地 `link:` 安装时也能从 profile 的 `node_modules` 找到依赖；找不到时日志会打印
   `[weekly-budget] schemastery 不可用`，处理方式见「安装 → 关于 schemastery 依赖」。
@@ -362,4 +391,4 @@ git config core.hooksPath .githooks
 
 ## 许可
 
-插件代码目前仅在本机开发使用；发布到 GitHub 前请补充仓库地址与 LICENSE。
+MIT，见仓库根目录的 `LICENSE`。图标 `icon.svg` 为原创作品，随本仓库以同一许可分发。

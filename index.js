@@ -1,9 +1,13 @@
 /**
  * dsh-weekly-budget · Node half（Host 侧）
  *
- * 扫描本机 DeepSeek Harness 的持久会话日志，按本周窗口累计 assistant/message
- * 事件上报的 token 用量，用可配置单价折算成金额，写成 summary.json 供浏览器
- * 侧的「每周额度」胶囊读取。
+ * 扫描**本机** DeepSeek Harness 的持久会话日志——`<DSH_HOME>/sessions` 下每个项目、
+ * 每个会话的规范日志文件，即本机全部持久化会话，与浏览器当前打开哪个会话无关；
+ * 按本周窗口累计 assistant/message 事件上报的 token 用量，用可配置单价折算成金额，
+ * 写成 summary.json 供浏览器侧的「每周额度」胶囊读取。
+ *
+ * 统计边界：只覆盖本机这一个 Harness 数据目录。同一 DeepSeek 账号在其它设备、
+ * 其它 Harness 实例上的用量不会出现在这里，也无法与官方账户账单同步。
  *
  * 为什么自己做日志解码而不是调 sessionQuery：
  * - 会话持久化是「若干标准 zstd 帧串联」的 JSONL（见 dsh-session-persistence-jsonl），
@@ -31,18 +35,24 @@ const SUMMARY_VERSION = 1
 const DEFAULT_PRICES = { input: 2, cacheRead: 0.04, cacheWrite: 0, output: 8 }
 
 /**
- * 解析 schemastery。安装方式可能是「复制进 profile/node_modules」或「link 到源码目录」，
- * 两者的模块解析根不同，因此这里按固定候选路径兜底加载，避免插件因找不到
- * @deepseek-ai/schemastery 而整体加载失败。
- * @returns schemastery 的默认导出（z）。
+ * 解析 schemastery。
+ *
+ * 正常安装时 Node 的模块解析直接命中 `dependencies` 声明的依赖；`link:`（本地目录）
+ * 安装时模块解析根不同，因此再用 Harness 自己注入的环境变量兜底——不写死任何 profile 名。
+ * @returns schemastery 的默认导出（z）；全部候选都失败时抛错。
  */
 function loadSchema() {
   const require = createRequire(import.meta.url)
-  const candidates = [
-    '@deepseek-ai/schemastery',
-    path.join(os.homedir(), '.dsh', 'profiles', 'desktop', 'node_modules', '@deepseek-ai', 'schemastery'),
-    path.join(os.homedir(), '.dsh', 'profiles', 'web', 'node_modules', '@deepseek-ai', 'schemastery'),
-  ]
+  const candidates = ['@deepseek-ai/schemastery']
+  const profileDir = typeof process.env.DSH_PROFILE_DIR === 'string' ? process.env.DSH_PROFILE_DIR.trim() : ''
+  if (profileDir !== '') {
+    candidates.push(path.join(profileDir, 'node_modules', '@deepseek-ai', 'schemastery'))
+  }
+  const profileName = typeof process.env.DSH_PROFILE === 'string' ? process.env.DSH_PROFILE.trim() : ''
+  if (profileName !== '') {
+    candidates.push(path.join(os.homedir(), '.dsh', 'profiles', profileName, 'node_modules', '@deepseek-ai', 'schemastery'))
+  }
+  let lastError
   for (const candidate of candidates) {
     try {
       const loaded = require(candidate)
@@ -50,40 +60,42 @@ function loadSchema() {
       if (typeof loaded === 'function' && typeof loaded.object === 'function') return loaded
       const wrapped = loaded !== null && typeof loaded === 'object' ? loaded.default : undefined
       if (typeof wrapped === 'function' && typeof wrapped.object === 'function') return wrapped
-    } catch {
-      // 继续尝试下一个候选；全都失败时抛最后一个错误。
+      lastError = new Error('不是可用的 schemastery 导出：' + candidate)
+    } catch (error) {
+      lastError = error
     }
   }
-  return require(candidates[candidates.length - 1])
+  throw lastError
 }
 
 let z = null
 try {
   z = loadSchema()
 } catch (error) {
-  console.error('[weekly-budget] schemastery 不可用，插件无法声明配置：', error)
+  console.error('[weekly-budget] schemastery 不可用，本次不声明 Config：', error)
   z = null
 }
-
-const schema = z ?? { object: (shape) => shape, boolean: () => ({}), number: () => ({}), string: () => ({}), union: (items) => items, const: (value) => value }
 
 /**
  * 插件配置：除 refreshSeconds 外都是 volatile，浏览器侧 configForms 可实时改写并回灌。
  *
  * 四个价格字段存的是「高峰价」（元/百万 token）；空闲时段按 offPeakRatio 折算
  * （官网规定空闲价 = 高峰价一半，见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing）。
+ *
+ * schemastery 缺失时导出 undefined 而不是伪造的 schema——Cordis 会把 undefined 当成
+ * 「该插件没有配置」，伪造对象反而会让 Loader 按错误 schema 校验现有配置。
  */
-export const Config = schema.object({
-  enabled: schema.boolean().default(true).volatile(),
-  weeklyLimit: schema.number().min(0).default(50).volatile(),
-  weekStartsOn: schema.union([schema.const('monday'), schema.const('sunday')]).default('monday').volatile(),
-  inputPrice: schema.number().min(0).default(2).volatile(),
-  cacheReadPrice: schema.number().min(0).default(0.04).volatile(),
-  cacheWritePrice: schema.number().min(0).default(0).volatile(),
-  outputPrice: schema.number().min(0).default(8).volatile(),
-  peakPricingEnabled: schema.boolean().default(true).volatile(),
-  offPeakRatio: schema.number().min(0).max(1).default(0.5).volatile(),
-  refreshSeconds: schema.number().min(5).max(600).default(20),
+export const Config = z === null ? undefined : z.object({
+  enabled: z.boolean().default(true).volatile(),
+  weeklyLimit: z.number().min(0).default(50).volatile(),
+  weekStartsOn: z.union([z.const('monday'), z.const('sunday')]).default('monday').volatile(),
+  inputPrice: z.number().min(0).default(2).volatile(),
+  cacheReadPrice: z.number().min(0).default(0.04).volatile(),
+  cacheWritePrice: z.number().min(0).default(0).volatile(),
+  outputPrice: z.number().min(0).default(8).volatile(),
+  peakPricingEnabled: z.boolean().default(true).volatile(),
+  offPeakRatio: z.number().min(0).max(1).default(0.5).volatile(),
+  refreshSeconds: z.number().min(5).max(600).default(20),
 })
 
 /**
@@ -432,6 +444,7 @@ export function apply(ctx, config) {
    * @param reason - 触发来源（仅用于日志）。
    */
   async function refresh(reason) {
+    if (disposed) return
     if (!live(config.enabled, true)) return
     if (running) {
       rerun = true
@@ -506,6 +519,11 @@ export function apply(ctx, config) {
       }
     }
   }
+
+  // 卸载时置位：进行中的 refresh 不再写盘，也不再排下一轮。
+  ctx.effect(() => () => {
+    disposed = true
+  }, 'weekly-budget: disposal')
 
   // 启动后立即算一次，之后按刷新间隔重算。定时器随插件 fiber 释放。
   void refresh('start')

@@ -51,6 +51,8 @@ dsh-weekly-budget/
 - 数据来源：扫描 `<DSH_HOME>/sessions/**/session-*.jsonl.zstd` 与未压缩的 `session*.jsonl`
   （每个会话目录取版本号最高的规范文件；v4 优先于 v0）。DSH_HOME 解析顺序：
   `$DSH_HOME`（trim 后非空）→ `os.homedir()/.dsh`。
+  **统计范围是本机这个数据目录下的全部持久化会话**（所有项目、所有会话），与浏览器当前
+  打开哪个会话无关；其它设备 / 其它 Harness 实例 / 同账号的其它客户端都不在范围内。
 - 日志是若干标准 zstd 帧串联。必须逐帧解压（Node 24 `node:zlib` 的
   `zstdDecompressSync` 一次只解第一帧）。按 zstd 帧头（magic + FHD + window/dict/FCS +
   blocks + checksum）精确切帧；尾部撕裂帧忽略。
@@ -120,9 +122,15 @@ dsh-weekly-budget/
 ## 4. Client 半端（client.js）
 
 - 通过 `window.__ModuleLoader__.load({ id: 'dsh-weekly-budget', factory(require) { ... } })` 注册。
-- `inject = ['slots', 'configForms', 'locale', 'remote', 'remote.workspaceFiles', 'sessions']`。
+- `inject = ['slots', 'configForms', 'locale', 'remote', 'remote.workspaceFiles']`。
+  Client 的 `sessions` 服务只提供 retain / retainInfo / refreshProjections 等接口，
+  **没有会话列表快照**，因此不得声明它，也不得访问 `ctx.sessions.list`。
 - `apply(ctx)`：
-  - `ctx.locale.register('weekly-budget', { zh, en })`（字典键集见 §5.4）。
+  - 全局 `<style>` 与 locale 字典都通过 `ctx.effect` 注册并返回清理函数（fiber 释放时一并移除）。
+  - `ctx.locale.register('weekly-budget', { zh, en })`（键集见 client.js 的 `zh` / `en` 字典，两者必须一致）。
+  - 注册槽位时声明 `locale: 'weekly-budget'`；渲染器据此在 `standardKit` 中注入
+    `props.t = locale.bind(namespace)`（`ui-renderer/lib/client.js` 的 `entry.locale` 分支），
+    组件不得自己再 bind。
   - `const form = ctx.configForms.get('weekly-budget')` 读写配置。
   - `ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({ name: 'conversation.composer.dock', id: 'weekly-budget', order: 2, locale: 'weekly-budget' }, WeeklyBudgetPill))`。
 - 配置读写：
@@ -134,8 +142,10 @@ dsh-weekly-budget/
   1. `<hostHome>/.dsh/storages/weekly-budget/summary.json`
   2. `<hostHome>/storages/weekly-budget/summary.json`
   `hostHome = ctx.remote.$host?.home`（os.homedir()；可能 undefined）。
-- sessionId：`props.sessionId` 优先；缺失时取 `ctx.sessions.list` 快照中 `retainedBy.mainView > 0` 的会话，
-  再退回任意 retained 会话、再退回第一行。没有会话时不发请求、按钮仍可用（显示上限与 0）。
+- sessionId：槽位是 session 作用域，渲染器注入 `props.sessionId`，直接用它。
+  它只是 `ctx.remote.workspaceFiles.read` 的**授权通道**，不限制统计范围——统计内容由 Host
+  汇总本机全部持久化会话（当前打开哪个会话都一样）。没有 sessionId 时不发请求、
+  按钮仍可用（显示上限与 0）。
 - 刷新：挂载即读；每 15 秒轮询；`window.addEventListener('focus')` 时读；点击弹窗「刷新」时读。
   组件卸载清理定时器与 abort。
 - 不要引入任何第三方库；只用 React（`require('react')`、`require('react-dom')`）。
@@ -148,8 +158,9 @@ dsh-weekly-budget/
 - 高度约 30px，圆角 `var(--dsw-radius-sm)`，字号 12px，颜色 `var(--dsw-alias-label-tertiary)`，
   hover/展开时背景 `var(--dsw-alias-interactive-bg-hover)`、文字 `var(--dsw-alias-label-secondary)`。
 - 进度条：轨道 `var(--dsw-alias-border-l2)`，填充按 status：
-  ok=`var(--dsw-alias-brand-primary)`、warn=`var(--dsw-alias-state-warning-primary)`、
+  ok=`var(--dsw-alias-brand-primary)`、warn=`var(--dsw-alias-state-warn-primary)`、
   over=`var(--dsw-alias-state-error-primary)`（变量名若不可用退回 `#e6a23c` / `#e5484d`）。
+  > 注意主题表里的真名是 `--dsw-alias-state-warn-primary`（不是 `state-warning-primary`）。
 - 宽度：`min(220px, 100%)`，文字溢出省略。百分比填充 clamp 到 0–100%。
 - `aria-haspopup="dialog"`、`aria-expanded`、`aria-label` 含中文完整信息。
 - 无 summary 时金额显示 `¥0.00 / ¥上限`，进度 0，并保留 `data-state="loading"`。
@@ -194,7 +205,11 @@ dsh-weekly-budget/
 3. 插件安装进 profile 后，GUI 输入框下方出现「每周额度」胶囊，进度条比例正确。
 4. 点击胶囊出现弹窗，能修改上限并持久化（刷新页面后仍生效）。
 5. 中英文文案完整（zh 键集 == en 键集）。
-6. README 说明安装、配置、口径与限制。
+6. README 说明安装、配置、口径与限制（含「只统计本机、不含多设备同账号」）。
+7. 显示资源齐备：`package.json` 导出 `./icon`、`locale/{zh,en}.json` 提供 `meta.title/description`、
+   仓库带 LICENSE 且 `package.json` 声明 `license`。
+8. `node tools/verify-static.mjs` 与 `node tools/verify-apply.mjs` 通过（后者跑在临时 DSH_HOME，
+   不覆盖真实 summary）。
 
 ## 6. 参考（只读，别改）
 
