@@ -8,21 +8,19 @@ token 用量和按模型折算的金额。
 > 插件读取**本机** Harness 会话日志里上报的 token 用量，按你配置的单价折算成人民币。
 > 与官方账单在口径、缓存命中判定、赠送额度、汇率等方面都可能不一致，只适合作预算参考。
 
-## 快速安装（三步）
-
-以插件源码位于 `<你的插件目录>`（例如 `D:\plugins\dsh-weekly-budget`）、profile 为 `desktop` 为例：
+## 快速安装（一条命令）
 
 ```powershell
-# 1) 把本地目录链接进 profile（写入 dependencies）
-& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<你的插件目录>"
+& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
 
-2. 打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，在 `dsh.profile.bundles`
-   数组末尾追加 `"dsh-weekly-budget"`（CLI 只改 dependencies，不会自动加这一项）。
-3. **完全重启 DeepSeek Harness**，再刷新页面。输入框下方出现「每周额度」胶囊即安装成功。
+这条命令从 GitHub 下载插件装进 `desktop` profile，并**自动**把 `dsh-weekly-budget`
+追加进 profile 的 `dsh.profile.bundles`——DSH 0.2.x 的插件管理器在安装成功后自己注册带
+`dsh.bundle.patch` 的依赖，**不需要手工改 `package.json`**。装完**完全重启** Harness，
+刷新页面；输入框下方出现「每周额度」胶囊即安装成功。
 
-> Host 半端（`index.js`）只在应用启动时加载，所以第 3 步必须重启；只刷新页面不会生效。
-> 详细步骤（手工安装、GitHub 安装、校验、卸载）见下方[安装](#安装)章节。
+> Host 半端（`index.js`）只在应用启动时加载，所以必须完全重启；只刷新页面不会生效。
+> 详细说明（在线安装、本地开发安装、校验、卸载）见下方[安装](#安装)章节。
 
 ## 功能
 
@@ -69,65 +67,11 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 ### 前置条件
 
 - DeepSeek Harness 0.2.x 的 Web 版本（已启用 `dsh-web-app` 与插件管理器相关 bundle）。
-- 插件目录里直接包含 `package.json` 与 `cordis.patch.yml`。
+- 要安装的包声明了 `dsh.bundle.patch`（本仓库 `package.json` 已声明）；GitHub 装与本地目录装都按包内清单解析。
 - 找到你的 profile：默认是 `desktop`，对应 `C:\Users\<你>\.dsh\profiles\desktop`。
   下文用 `%DSH_HOME%` 表示 Harness 主目录（默认 `C:\Users\<你>\.dsh`）。
 
-### 方式一：从本地目录安装（开发 / 离线）
-
-以插件源码放在 `<你的插件目录>` 为例。
-
-1. **备份** profile 的 `package.json`：
-
-   ```powershell
-   Copy-Item "$env:USERPROFILE\.dsh\profiles\desktop\package.json" \
-             "$env:USERPROFILE\.dsh\profiles\desktop\package.json.bak"
-   ```
-
-2. **注册依赖**。二选一：
-
-   - 用 CLI（会转发给 pnpm，自动写入 `dependencies`）：
-
-     ```powershell
-     dsh plugin --profile desktop add "link:<你的插件目录>"
-     ```
-
-     如果 `dsh` 不在 PATH 中，用完整路径（Windows 安装包的默认位置；实测该目录下存在
-     `dsh.cmd`，可正常转发 `plugin` 子命令到 pnpm）：
-
-     ```powershell
-     & "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "link:<你的插件目录>"
-     ```
-
-   - 或手工编辑 `%DSH_HOME%\profiles\desktop\package.json`，只加两处：
-
-     ```jsonc
-     "dependencies": {
-       // ...其它插件不动...
-       "dsh-weekly-budget": "link:<你的插件目录>"
-     },
-     "dsh": {
-       "profile": {
-         "bundles": [
-           // ...其它 bundle 不动...
-           "dsh-weekly-budget"
-         ]
-       }
-     }
-     ```
-
-3. **安装依赖**（手工编辑时必须执行；用 CLI `add` 可跳过）：
-
-   ```powershell
-   dsh plugin --profile desktop install
-   ```
-
-   `link:` 会在 profile 的 `node_modules` 下建立指向源码目录的链接，之后改源码不需要重装。
-
-4. **重启 Harness，再刷新页面**。Host 端代码（`index.js`）只在应用启动时加载，
-   安装完成后必须完整重启一次 Harness；重启后刷新浏览器页面，输入框下方才会出现胶囊。
-
-### 方式二：从 GitHub 安装
+### 方式一：从 GitHub 安装（推荐）
 
 仓库：<https://github.com/wuyp0731/dsh-weekly-budget>
 
@@ -135,11 +79,58 @@ cost = base × 时段系数        # 高峰时刻 = 1，空闲时刻 = offPeakRa
 dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 ```
 
-然后在 profile 的 `package.json` 中把 `"dsh-weekly-budget"` 追加进 `dsh.profile.bundles`
-（CLI 不会自动改这里），重启 Harness 并刷新页面。
+`dsh` 不在 PATH 时用完整路径（Windows 安装包的默认位置）：
 
-在 Harness 会话里也可以让 Agent 用插件管理器完成同样的两步：
+```powershell
+& "D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
+```
+
+命令会做两件事，**不需要再手工编辑 profile 的 `package.json`**：
+
+1. 从 GitHub 下载仓库内容，装到 `%DSH_HOME%\profiles\desktop\node_modules\dsh-weekly-budget`；
+2. DSH 的插件管理器在安装成功后，自动把带 `dsh.bundle.patch` 元数据的新依赖追加进 profile 的
+   `dsh.profile.bundles`（`runProfilePnpm` 末尾的 reconcile）。
+
+> 旧版文档说"CLI 只改 dependencies、不会自动加 bundles"，那是 0.2.x 早期行为。在 DSH
+> **0.2.1-rc.2** 上实测：从零安装到一个全新 profile，`bundles` 里直接多出 `dsh-weekly-budget`，
+> 无需手工补；`dsh --profile <profile> --dump-config` 里也能看到 `- id: weekly-budget` 这一行。
+
+在 Harness 会话里让 Agent 用插件管理器安装也可以：
 `action = install_bundle`、`target = github:wuyp0731/dsh-weekly-budget`。
+
+装完**完全重启 Harness**，再刷新页面（Host 半端只在启动时加载）。
+
+> 安装中途被打断（关窗口、网络断）时，第 2 步可能没执行——这种情况才需要补：
+> 在 profile 的 `dsh.profile.bundles` 里加上 `"dsh-weekly-budget"`。
+
+### 方式二：从本地目录安装（开发 / 离线）
+
+适合改代码时热调试（`link:` 指向源码目录，改完源码不用重装），或没有外网的机器。
+
+以插件源码放在 `<你的插件目录>` 为例。
+
+1. **备份** profile 的 `package.json`：
+
+   ```powershell
+   Copy-Item "$env:USERPROFILE\.dsh\profiles\desktop\package.json" `
+             "$env:USERPROFILE\.dsh\profiles\desktop\package.json.bak"
+   ```
+
+2. **注册依赖**：
+
+   ```powershell
+   dsh plugin --profile desktop add "link:<你的插件目录>"
+   ```
+
+   走 CLI `add` 时同样会自动注册 `bundles`（同方式一第 2 点），不需要手工改。
+   只有直接手改 `package.json` 的场合才需要自己往 `dsh.profile.bundles` 里加
+   `"dsh-weekly-budget"`，改完再执行一次 `dsh plugin --profile desktop install`。
+
+3. **重启 Harness，再刷新页面**。Host 端代码（`index.js`）只在应用启动时加载，
+   重启后刷新浏览器页面，输入框下方才会出现胶囊。
+
+`link:` 装过再改成 GitHub 版时，pnpm 可能报 `ERR_PNPM_EPERM`：先删掉残留的
+`node_modules\dsh-weekly-budget` 链接目录（junction）再重装。
 
 ### 校验是否装好
 
