@@ -38,7 +38,9 @@ const DEFAULT_PRICES = { input: 2, cacheRead: 0.04, cacheWrite: 0, output: 8 }
  * 解析 schemastery。
  *
  * 正常安装时 Node 的模块解析直接命中 `dependencies` 声明的依赖；`link:`（本地目录）
- * 安装时模块解析根不同，因此再用 Harness 自己注入的环境变量兜底——不写死任何 profile 名。
+ * 安装时插件目录没有 node_modules、Host 进程也未必有 profile 环境变量，因此再按
+ * ① profile 环境变量 ② Electron 安装目录（`process.resourcesPath` 的 app.asar）
+ * ③ 可执行文件旁的 resources 兜底——不写死任何 profile 名。
  * @returns schemastery 的默认导出（z）；全部候选都失败时抛错。
  */
 function loadSchema() {
@@ -51,6 +53,14 @@ function loadSchema() {
   const profileName = typeof process.env.DSH_PROFILE === 'string' ? process.env.DSH_PROFILE.trim() : ''
   if (profileName !== '') {
     candidates.push(path.join(os.homedir(), '.dsh', 'profiles', profileName, 'node_modules', '@deepseek-ai', 'schemastery'))
+  }
+  // Electron 桌面版：安装目录里就有一份与 Host 同版本的 schemastery（asar 内可直接 require）。
+  const resourcesPaths = []
+  if (typeof process.resourcesPath === 'string' && process.resourcesPath !== '') resourcesPaths.push(process.resourcesPath)
+  if (typeof process.execPath === 'string' && process.execPath !== '') resourcesPaths.push(path.join(path.dirname(process.execPath), 'resources'))
+  for (const resources of resourcesPaths) {
+    candidates.push(path.join(resources, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'schemastery'))
+    candidates.push(path.join(resources, 'app.asar', 'node_modules', '@deepseek-ai', 'schemastery'))
   }
   let lastError
   for (const candidate of candidates) {

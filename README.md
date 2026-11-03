@@ -158,17 +158,26 @@ dsh plugin --profile desktop add "github:wuyp0731/dsh-weekly-budget"
 
 Host 半端用 `@deepseek-ai/schemastery` 声明配置。插件通过 `createRequire` 依次尝试：
 
-1. `@deepseek-ai/schemastery`（正常安装时由 `dependencies` 直接解析）；
-2. `$DSH_PROFILE_DIR/node_modules/@deepseek-ai/schemastery`（Harness 注入的环境变量）；
-3. `~/.dsh/profiles/$DSH_PROFILE/node_modules/@deepseek-ai/schemastery`。
+1. `@deepseek-ai/schemastery`（正常安装时由 `dependencies` 直接解析；`link:` 安装则取决于
+   插件目录或上层目录是否有 `node_modules`）；
+2. `$DSH_PROFILE_DIR/node_modules/@deepseek-ai/schemastery`（Harness 注入给 shell 的环境变量，
+   **Host 进程本身不一定有**）；
+3. `~/.dsh/profiles/$DSH_PROFILE/node_modules/@deepseek-ai/schemastery`；
+4. **Electron 安装目录**：`<resources>/app.asar/dsh/node_modules/@deepseek-ai/schemastery`
+   （由 `process.resourcesPath` 与 `process.execPath` 旁的 `resources` 推出）。
 
-这样 `link:`（本地目录）安装也能工作，且**不写死任何 profile 名**。三个候选都失败时，
-插件仍会加载，但只会日志 `[weekly-budget] schemastery 不可用，本次不声明 Config`，
-此时配置项不会出现在插件配置页——处理方式：
+第 4 条是为 `link:` 安装准备的兜底：此时插件目录没有 `node_modules`、Host 进程也可能没有
+profile 环境变量，但仍能用到与 Host 同一份 schemastery。全部候选都失败时，插件仍会加载，
+但只日志 `[weekly-budget] schemastery 不可用，本次不声明 Config`；**此时设置页不会出现
+「每周额度」配置命名空间**（表现为弹窗里保存/同步提示 `namespace-missing`）。处理方式：
 
+- 升级到 0.1.4+（自带第 4 条兜底）；或
 - 在插件目录下建链接：`node_modules/@deepseek-ai/schemastery` 指向 profile 的
   `node_modules/@deepseek-ai/schemastery`；或
 - 把插件复制（而不是 `link:`）进 profile 的 `node_modules`，让它按普通包解析依赖。
+
+> 排查提示：Host 侧 `Config` 目录里该插件的 `status` 是 `schema` 表示配置已声明，
+> `absent` 表示没声明（多半就是 schemastery 没解析到）。
 
 ## 使用
 
@@ -402,6 +411,7 @@ git config core.hooksPath .githooks
 | 弹窗提示读取失败 | 通常是 summary 尚未生成或路径不存在；首次安装后等一次扫描，或点「刷新」。 |
 | 从本地链接切到 GitHub 版本报 `ERR_PNPM_EPERM` | 删除残留的 `node_modules\dsh-weekly-budget` 链接目录（junction）后重试。 |
 | Host 日志出现 `[weekly-budget] schemastery 不可用` | 在插件目录建 `node_modules/@deepseek-ai/schemastery` 链接，或改用复制安装，见「关于 schemastery 依赖」。 |
+| 弹窗保存/同步提示 `namespace-missing` | Host 没把插件配置暴露给设置页，多半是 schemastery 没解析到、`Config` 未声明（`Config` 目录里该插件 `status: absent`）。升级到 **0.1.4+**（新增 Electron 安装目录兜底），或在插件目录建 schemastery 链接后**重启 Harness**。 |
 
 ## 许可
 
