@@ -189,6 +189,11 @@ Host 半端用 `@deepseek-ai/schemastery` 声明配置。插件通过 `createReq
 它按本周用量最大的模型取官网价格快照（2026-10-17）的峰价写入四个字段，同时把
 `peakPricingEnabled` 打开、`offPeakRatio` 设为 0.5，并提示同步到的模型名。
 
+写入细节（0.1.2 起）：这六个字段在一次 `configForms.mutate` 里**原子提交**，且值没变的
+字段会被跳过——如果当前本来就已经是官网价，会直接提示「当前已是官网价」，不写盘。
+（DSH 0.2.1-rc.5 的配置写入带 revision 校验，0.1.1 的逐个字段连续写入会撞上过期
+revision 被 Host 拒绝，页面上就表现为「保存失败」。）
+
 可修改的配置：
 
 | 字段 | 类型 | 默认 | 说明 |
@@ -372,10 +377,13 @@ git config core.hooksPath .githooks
 
 ## 兼容性
 
-- 面向 DeepSeek Harness **0.2.x Web** 版本（开发时基于 0.2.1-rc.2）。
+- 面向 DeepSeek Harness **0.2.x Web** 版本（开发与验证基于 0.2.1-rc.5）。
 - Host 半端依赖 Node 24 内置的 `zlib.zstdDecompressSync`。
-- 客户端半端依赖 `slots`、`configForms`、`locale`、`remote.workspaceFiles` 服务；
+- 客户端半端依赖 `slots`、`configForms`、`locale`、`remote`、`remote.workspaceFiles` 服务；
   Harness 升级后如这些服务签名变化，插件需要同步更新。
+- 配置写入：0.2.1-rc.5 起 `form.set` / `form.mutate` 走带 revision 的 CAS，Host 以
+  `settings/conflict` 拒绝过期写入。插件因此把多字段保存改为一次 `mutate` 提交，
+  并在失败后用刷新后的 revision 重试一次，最后才退回逐字段写入。
 
 ## 常见问题
 
@@ -385,6 +393,7 @@ git config core.hooksPath .githooks
 | 胶囊显示 `¥0.00` 且一直不涨 | 检查 `summary.json` 是否生成；确认本周有带 usage 的会话；确认 `DSH_HOME` 指向实际主目录。 |
 | 金额和官方账单差很多 | 正常：峰谷、节假日、赠送额度都无法完全还原；先点「同步官网定价」，再按实际模型调整峰价。 |
 | 改了上限但进度条没变 | 保存失败会回滚并提示；确认配置已写入 profile，必要时重启后再试。 |
+| 「同步官网定价」提示保存失败 | 0.1.1 及更早版本在 DSH 0.2.1-rc.5 上连续写 6 个字段会被 revision 校验拒绝；升级到 **0.1.2** 即可（一次原子提交 + 跳过未变化字段）。 |
 | 弹窗提示读取失败 | 通常是 summary 尚未生成或路径不存在；首次安装后等一次扫描，或点「刷新」。 |
 | 从本地链接切到 GitHub 版本报 `ERR_PNPM_EPERM` | 删除残留的 `node_modules\dsh-weekly-budget` 链接目录（junction）后重试。 |
 | Host 日志出现 `[weekly-budget] schemastery 不可用` | 在插件目录建 `node_modules/@deepseek-ai/schemastery` 链接，或改用复制安装，见「关于 schemastery 依赖」。 |

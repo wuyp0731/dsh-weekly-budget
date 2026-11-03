@@ -135,7 +135,15 @@ dsh-weekly-budget/
   - `ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({ name: 'conversation.composer.dock', id: 'weekly-budget', order: 2, locale: 'weekly-budget' }, WeeklyBudgetPill))`。
 - 配置读写：
   - 读：`form.getSnapshot()?.value`（可能 undefined），`form.subscribe(fn)`。
-  - 写：`form.set('weeklyLimit', 100)` 返回 Promise<boolean>；false/拒绝时回滚并提示。
+  - 写单个字段：`form.set('weeklyLimit', 100)` 返回 `Promise<boolean>`；false/拒绝时回滚并提示。
+  - **写多个字段：必须一次 `form.mutate([{ op: 'set', path: [field], value }, ...])` 原子提交。**
+    DSH 0.2.1-rc.5 起 Host 侧配置写入是带 revision 的 CAS（冲突码 `settings/conflict`），
+    每次成功写入都会推进 revision 并触发一次配置重载；连续 `set` 会在中间几次撞上过期
+    revision 被拒，页面表现为「保存失败」。失败时 `ConfigFormController` 已重新加载
+    mirror，可等待约 250ms 后用新 revision 重试一次；仍失败再退回逐字段 `set`。
+  - 值未变化的字段不要提交（无意义写入只会多触发一次配置重载）；全部未变化时
+    直接提示「当前已是官网价」，不写盘。
+  - `mutate` 不存在时（更老的 DSH）退回逐个 `set`，保证向后兼容。
 - 数据读取：`const result = await ctx.remote.workspaceFiles.read(sessionId, path, {}, signal)`；
   成功 `result.ok === true` 且 `result.value.text` 是 JSON 文本；失败时 `result.ok === false`。
   候选路径依次尝试：

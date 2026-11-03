@@ -96,6 +96,7 @@ window.__ModuleLoader__.load({
       'dialog.priceOutput': '输出',
       'dialog.syncPricing': '同步官网定价',
       'dialog.syncSynced': '已同步 {model} 官网价',
+      'dialog.syncUnchanged': '当前已是官网价',
       'dialog.syncHint': '峰价：工作日 9–12、14–18（北京时间）；空闲时段自动半价',
       'dialog.syncSource': '价格快照 {source}（{date}），官网调价后请重新同步',
       'dialog.save': '保存',
@@ -141,6 +142,7 @@ window.__ModuleLoader__.load({
       'dialog.priceOutput': 'Output',
       'dialog.syncPricing': 'Sync official prices',
       'dialog.syncSynced': 'Synced official {model} prices',
+      'dialog.syncUnchanged': 'Already using the official prices',
       'dialog.syncHint': 'Peak prices: Mon–Fri 09:00–12:00 and 14:00–18:00 (UTC+8); off-peak is automatically half price',
       'dialog.syncSource': 'Price snapshot {source} ({date}); re-sync when DeepSeek updates its page',
       'dialog.save': 'Save',
@@ -803,6 +805,57 @@ window.__ModuleLoader__.load({
           if (open) load();
         }, [open, load]);
 
+        /**
+         * 一次提交多个配置字段。
+         *
+         * DSH 0.2.1-rc.5 起，配置写入是带 revision 的 CAS：每次成功写入都会触发一次
+         * 配置重载，随后 describe 推进 revision。连续的单字段写入（原来的「同步官网
+         * 定价」就是连写 6 次）会在中间几次撞上过期 revision，被 Host 以
+         * settings/conflict 拒绝，页面上就表现为「保存失败」。
+         *
+         * 所以这里优先用 form.mutate 一次原子提交；失败时等 mirror 重新加载到最新
+         * revision 后重试一次；仍失败才退回逐字段 set（兼容没有 mutate 的旧版本）。
+         * @param entries - [字段名, 值] 列表。
+         * @returns 写入结果与真正发生变化的字段数。
+         */
+        const commitFields = async (entries) => {
+          if (form === undefined || form === null || typeof form.set !== 'function') {
+            console.error('[weekly-budget] 配置表单不可用：ctx.configForms 没有提供 form');
+            return { ok: false, changed: 0 };
+          }
+          // 值没变的字段不提交：无意义的写入只会多触发一次配置重载。
+          const changed = entries.filter((entry) => config[entry[0]] !== entry[1]);
+          if (changed.length === 0) return { ok: true, changed: 0 };
+          if (typeof form.mutate === 'function') {
+            const ops = changed.map((entry) => ({ op: 'set', path: [entry[0]], value: entry[1] }));
+            const submit = () => {
+              let pending;
+              try {
+                pending = form.mutate(ops);
+              } catch (error) {
+                console.error('[weekly-budget] 配置提交抛错：', error);
+                return Promise.resolve(false);
+              }
+              return Promise.resolve(pending).then(
+                (accepted) => accepted !== false,
+                (error) => {
+                  console.error('[weekly-budget] 配置提交被拒绝：', error);
+                  return false;
+                },
+              );
+            };
+            if (await submit()) return { ok: true, changed: changed.length };
+            // 失败后 ConfigFormController 已经重新加载 mirror；等一轮再用最新 revision 重试。
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            if (await submit()) return { ok: true, changed: changed.length };
+            console.error('[weekly-budget] 原子提交两次都被拒绝，退回逐字段写入');
+          }
+          for (const entry of changed) {
+            if (!await writeField(entry[0], entry[1])) return { ok: false, changed: 0 };
+          }
+          return { ok: true, changed: changed.length };
+        };
+
         /** 保存每周上限。 */
         const saveLimit = () => {
           if (readonly) {
@@ -852,24 +905,22 @@ window.__ModuleLoader__.load({
           });
           setBusy(true);
           (async () => {
-            const writes = [
+            const result = await commitFields([
               ['inputPrice', table.input],
               ['cacheReadPrice', table.cacheRead],
               ['cacheWritePrice', table.cacheWrite],
               ['outputPrice', table.output],
               ['peakPricingEnabled', true],
               ['offPeakRatio', OFFICIAL_PRICING.offPeakRatio],
-            ];
-            for (let index = 0; index < writes.length; index += 1) {
-              const accepted = await writeField(writes[index][0], writes[index][1]);
-              if (!accepted) {
-                setBusy(false);
-                flash(setPriceNotice, 'error', t('dialog.saveFailed'));
-                return;
-              }
-            }
+            ]);
             setBusy(false);
-            flash(setPriceNotice, 'ok', t('dialog.syncSynced', { model: appliedModel }));
+            if (!result.ok) {
+              flash(setPriceNotice, 'error', t('dialog.saveFailed'));
+              return;
+            }
+            flash(setPriceNotice, 'ok', result.changed === 0
+              ? t('dialog.syncUnchanged')
+              : t('dialog.syncSynced', { model: appliedModel }));
             load();
           })();
         };
@@ -893,7 +944,6 @@ window.__ModuleLoader__.load({
             }
           }
           setBusy(true);
-          const fields = Object.keys(parsed);
           const rollback = () => setPriceDrafts({
             input: String(prices.input),
             cacheRead: String(prices.cacheRead),
@@ -901,16 +951,18 @@ window.__ModuleLoader__.load({
             output: String(prices.output),
           });
           (async () => {
-            for (const key of fields) {
-              const accepted = await writeField(key, parsed[key]);
-              if (!accepted) {
-                setBusy(false);
-                rollback();
-                flash(setPriceNotice, 'error', t('dialog.saveFailed'));
-                return;
-              }
-            }
+            const result = await commitFields([
+              ['inputPrice', parsed.inputPrice],
+              ['cacheReadPrice', parsed.cacheReadPrice],
+              ['cacheWritePrice', parsed.cacheWritePrice],
+              ['outputPrice', parsed.outputPrice],
+            ]);
             setBusy(false);
+            if (!result.ok) {
+              rollback();
+              flash(setPriceNotice, 'error', t('dialog.saveFailed'));
+              return;
+            }
             flash(setPriceNotice, 'ok', t('dialog.saved'));
             load();
           })();
