@@ -1,6 +1,6 @@
 {
   "name": "dsh-weekly-budget",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Weekly spend budget for DeepSeek Harness: a composer dock pill with a weekly progress bar and a configurable weekly spending cap.",
   "license": "MIT",

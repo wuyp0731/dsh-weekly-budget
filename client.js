@@ -401,6 +401,19 @@ window.__ModuleLoader__.load({
       return String(error);
     }
 
+    /**
+     * 保存失败提示：附带 Host 给出的简短原因（错误码或消息），便于定位问题。
+     * @param t - 翻译函数。
+     * @param reason - Host 拒绝原因，可能为空。
+     * @returns 展示文案。
+     */
+    function saveFailedText(t, reason) {
+      const base = t('dialog.saveFailed');
+      if (typeof reason !== 'string' || reason === '') return base;
+      const short = reason.length > 60 ? reason.slice(0, 60) + '…' : reason;
+      return base + '（' + short + '）';
+    }
+
     /** 取 configForms 表单快照；form 缺席时返回 undefined。 */
     function snapshotOf(form) {
       if (form === undefined || form === null || typeof form.getSnapshot !== 'function') return undefined;
@@ -517,7 +530,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    const inject = ['slots', 'configForms', 'locale', 'remote', 'remote.workspaceFiles'];
+    const inject = ['slots', 'configForms', 'locale', 'remote', 'remote.settings', 'remote.workspaceFiles'];
 
     function apply(ctx) {
       // 样式与字典都是本插件资源：注册在 apply 内、随 fiber 释放。
@@ -530,6 +543,8 @@ window.__ModuleLoader__.load({
         : undefined;
       const remote = ctx.remote !== undefined && ctx.remote !== null ? ctx.remote : undefined;
       const workspaceFiles = remote !== undefined ? remote.workspaceFiles : undefined;
+      // 直连的 settings Remote：configForms 会把写入失败吞成 false，这里用它取回错误码。
+      const remoteSettings = remote !== undefined && remote.settings !== undefined ? remote.settings : undefined;
 
       // 字典随本插件 fiber 释放；t 由插槽渲染器注入。
       const registerDictionaries = () => ctx.locale.register(LOCALE_NS, { zh: zh, en: en });
@@ -561,6 +576,71 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * 读 Host 侧 settings.describe，取本命名空间的最新 revision。
+       * @returns 找到时带 revision；找不到时带简短原因。
+       */
+      async function readServerRevision() {
+        if (remoteSettings === undefined || typeof remoteSettings.describe !== 'function') {
+          return { found: false, reason: 'no-remote-settings' };
+        }
+        let response;
+        try {
+          response = await remoteSettings.describe();
+        } catch (error) {
+          return { found: false, reason: errorMessage(error) };
+        }
+        if (response === null || response === undefined || response.ok !== true) {
+          const failure = response !== null && response !== undefined ? response.error : undefined;
+          const code = failure !== undefined ? failure.code : 'describe-failed';
+          console.error('[weekly-budget] settings.describe 失败：', code);
+          return { found: false, reason: code };
+        }
+        const view = response.value;
+        const namespaces = view !== null && view !== undefined && Array.isArray(view.namespaces) ? view.namespaces : [];
+        const row = namespaces.find((item) => item !== null && item !== undefined && item.ns === NAMESPACE);
+        if (row === undefined) {
+          console.error('[weekly-budget] Host 未暴露本插件配置，可配置命名空间：', namespaces.map((item) => item.ns));
+          return { found: false, reason: 'namespace-missing' };
+        }
+        return { found: true, revision: row.revision };
+      }
+
+      /**
+       * 绕过 configForms 的封装，直接用 settings Remote 写一组字段。
+       *
+       * ConfigFormController 会把 Host 的拒绝（settings/conflict 等）折叠成 false：
+       * 拿不到原因，也拿不到可用的新 revision。这里自己读 revision、取错误码，
+       * 冲突时重读 revision 再试一次。
+       * @param ops - [{ op: 'set', path: [field], value }]。
+       * @returns 写入是否被 Host 接受。
+       */
+      async function writeViaRemote(ops) {
+        if (remoteSettings === undefined || typeof remoteSettings.mutate !== 'function') {
+          return { ok: false, reason: 'no-remote-settings' };
+        }
+        let reason = 'unknown';
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const probe = await readServerRevision();
+          if (!probe.found) return { ok: false, reason: probe.reason };
+          let response;
+          try {
+            response = await remoteSettings.mutate(NAMESPACE, ops, probe.revision);
+          } catch (error) {
+            return { ok: false, reason: errorMessage(error) };
+          }
+          if (response !== null && response !== undefined && response.ok === true) return { ok: true };
+          const failure = response !== null && response !== undefined ? response.error : undefined;
+          const code = failure !== undefined ? failure.code : 'mutate-failed';
+          const message = failure !== undefined ? failure.message : '';
+          console.error('[weekly-budget] settings.mutate 被拒绝：', code, message);
+          reason = message !== '' ? message : code;
+          if (code !== 'settings/conflict') return { ok: false, reason: reason };
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+        return { ok: false, reason: reason };
+      }
+
+      /**
        * 输入框下方的「每周额度」胶囊 + 配置弹窗。
        * @param props - 渲染器注入的 t（locale 命名空间），可能还有 sessionId。
        */
@@ -575,6 +655,20 @@ window.__ModuleLoader__.load({
           return typeof unsubscribe === 'function' ? unsubscribe : undefined;
         }, []);
         const config = readConfig(form);
+
+        // 挂载时做一次只读诊断：确认 Host 是否把本插件配置暴露给设置页。
+        // 结果只进 console（刷新页面后即可在 DevTools 看到），不影响界面。
+        React.useEffect(() => {
+          let cancelled = false;
+          readServerRevision().then((probe) => {
+            if (cancelled) return;
+            if (probe.found) console.log('[weekly-budget] 配置命名空间可用，revision =', probe.revision);
+            else console.error('[weekly-budget] 配置命名空间不可用：', probe.reason);
+          });
+          return () => {
+            cancelled = true;
+          };
+        }, []);
 
         // ── 会话：只用槽位注入的授权会话；统计内容本身是全机汇总 ────────────
         const sessionId = sessionIdOf(props);
@@ -808,52 +902,54 @@ window.__ModuleLoader__.load({
         /**
          * 一次提交多个配置字段。
          *
-         * DSH 0.2.1-rc.5 起，配置写入是带 revision 的 CAS：每次成功写入都会触发一次
-         * 配置重载，随后 describe 推进 revision。连续的单字段写入（原来的「同步官网
-         * 定价」就是连写 6 次）会在中间几次撞上过期 revision，被 Host 以
-         * settings/conflict 拒绝，页面上就表现为「保存失败」。
-         *
-         * 所以这里优先用 form.mutate 一次原子提交；失败时等 mirror 重新加载到最新
-         * revision 后重试一次；仍失败才退回逐字段 set（兼容没有 mutate 的旧版本）。
+         * DSH 0.2.1-rc.5 起，配置写入是带 revision 的 CAS，而且 `ConfigFormController`
+         * 会把 Host 的拒绝折叠成 false（既没有原因，也不会把最新 revision 交回来）。
+         * 所以这里按可靠性依次尝试三条写入路径：
+         *   ① 直连 `ctx.remote.settings`：自己读 revision、拿错误码，冲突时重读后重试；
+         *   ② `form.mutate` 原子提交（带一次重试）；
+         *   ③ 逐字段 `form.set`（兼容更老的 DSH）。
+         * 值没变的字段不提交——无意义写入只会多触发一次配置重载。
          * @param entries - [字段名, 值] 列表。
-         * @returns 写入结果与真正发生变化的字段数。
+         * @returns 写入结果、真正变化的字段数与失败原因。
          */
         const commitFields = async (entries) => {
-          if (form === undefined || form === null || typeof form.set !== 'function') {
-            console.error('[weekly-budget] 配置表单不可用：ctx.configForms 没有提供 form');
-            return { ok: false, changed: 0 };
-          }
-          // 值没变的字段不提交：无意义的写入只会多触发一次配置重载。
           const changed = entries.filter((entry) => config[entry[0]] !== entry[1]);
-          if (changed.length === 0) return { ok: true, changed: 0 };
-          if (typeof form.mutate === 'function') {
-            const ops = changed.map((entry) => ({ op: 'set', path: [entry[0]], value: entry[1] }));
+          if (changed.length === 0) return { ok: true, changed: 0, reason: null };
+          const ops = changed.map((entry) => ({ op: 'set', path: [entry[0]], value: entry[1] }));
+          // ① 直连 settings Remote
+          const direct = await writeViaRemote(ops);
+          if (direct.ok) return { ok: true, changed: changed.length, reason: null };
+          console.error('[weekly-budget] 直连写入失败：', direct.reason);
+          // ② configForms 的原子提交
+          if (form !== undefined && form !== null && typeof form.mutate === 'function') {
             const submit = () => {
               let pending;
               try {
                 pending = form.mutate(ops);
               } catch (error) {
-                console.error('[weekly-budget] 配置提交抛错：', error);
+                console.error('[weekly-budget] form.mutate 抛错：', error);
                 return Promise.resolve(false);
               }
               return Promise.resolve(pending).then(
                 (accepted) => accepted !== false,
                 (error) => {
-                  console.error('[weekly-budget] 配置提交被拒绝：', error);
+                  console.error('[weekly-budget] form.mutate 被拒绝：', error);
                   return false;
                 },
               );
             };
-            if (await submit()) return { ok: true, changed: changed.length };
-            // 失败后 ConfigFormController 已经重新加载 mirror；等一轮再用最新 revision 重试。
+            if (await submit()) return { ok: true, changed: changed.length, reason: null };
             await new Promise((resolve) => setTimeout(resolve, 250));
-            if (await submit()) return { ok: true, changed: changed.length };
-            console.error('[weekly-budget] 原子提交两次都被拒绝，退回逐字段写入');
+            if (await submit()) return { ok: true, changed: changed.length, reason: null };
+            console.error('[weekly-budget] form.mutate 两次都被拒绝');
           }
+          // ③ 逐字段写入（老版本兼容路径）
           for (const entry of changed) {
-            if (!await writeField(entry[0], entry[1])) return { ok: false, changed: 0 };
+            if (!await writeField(entry[0], entry[1])) {
+              return { ok: false, changed: 0, reason: direct.reason };
+            }
           }
-          return { ok: true, changed: changed.length };
+          return { ok: true, changed: changed.length, reason: null };
         };
 
         /** 保存每周上限。 */
@@ -868,16 +964,16 @@ window.__ModuleLoader__.load({
             return;
           }
           setBusy(true);
-          writeField('weeklyLimit', parsed).then((accepted) => {
+          commitFields([['weeklyLimit', parsed]]).then((result) => {
             setBusy(false);
-            if (accepted) {
+            if (result.ok) {
               setLimitDraft(String(parsed));
               flash(setLimitNotice, 'ok', t('dialog.saved'));
               load();
               return;
             }
             setLimitDraft(String(limit));
-            flash(setLimitNotice, 'error', t('dialog.saveFailed'));
+            flash(setLimitNotice, 'error', saveFailedText(t, result.reason));
           });
         };
 
@@ -915,7 +1011,7 @@ window.__ModuleLoader__.load({
             ]);
             setBusy(false);
             if (!result.ok) {
-              flash(setPriceNotice, 'error', t('dialog.saveFailed'));
+              flash(setPriceNotice, 'error', saveFailedText(t, result.reason));
               return;
             }
             flash(setPriceNotice, 'ok', result.changed === 0
@@ -960,7 +1056,7 @@ window.__ModuleLoader__.load({
             setBusy(false);
             if (!result.ok) {
               rollback();
-              flash(setPriceNotice, 'error', t('dialog.saveFailed'));
+              flash(setPriceNotice, 'error', saveFailedText(t, result.reason));
               return;
             }
             flash(setPriceNotice, 'ok', t('dialog.saved'));
@@ -976,13 +1072,13 @@ window.__ModuleLoader__.load({
             return;
           }
           if (next === weekStartsOn) return;
-          writeField('weekStartsOn', next).then((accepted) => {
-            if (accepted) {
+          commitFields([['weekStartsOn', next]]).then((result) => {
+            if (result.ok) {
               flash(setWeekNotice, 'ok', t('dialog.saved'));
               load();
               return;
             }
-            flash(setWeekNotice, 'error', t('dialog.saveFailed'));
+            flash(setWeekNotice, 'error', saveFailedText(t, result.reason));
           });
         };
 
